@@ -904,11 +904,33 @@ async function generate(){
   let mi=0;
   const ticker = setInterval(()=>{ setLoader(messages[Math.min(++mi,messages.length-1)]); },2200);
 
-  const cName     = document.getElementById('b-name')?.value.trim()     || '';
-  const cPhone    = document.getElementById('b-phone')?.value.trim()    || '';
-  const cEmail    = document.getElementById('b-email')?.value.trim()    || '';
-  const cLinkedin = document.getElementById('b-linkedin')?.value.trim() || '';
-  const cLocation = document.getElementById('b-location')?.value.trim() || '';
+  // Extract contact info from form fields (build mode) or top of pasted resume (paste mode)
+  let cName='', cPhone='', cEmail='', cLinkedin='', cLocation='';
+
+  if(currentMode === 'build'){
+    cName     = document.getElementById('b-name')?.value.trim()     || '';
+    cPhone    = document.getElementById('b-phone')?.value.trim()    || '';
+    cEmail    = document.getElementById('b-email')?.value.trim()    || '';
+    cLinkedin = document.getElementById('b-linkedin')?.value.trim() || '';
+    cLocation = document.getElementById('b-location')?.value.trim() || '';
+  } else {
+    // Auto-extract from top of pasted resume
+    const resumeLines = resume.split('\n').map(l=>l.trim()).filter(Boolean);
+    // Line 0 = name (no @ or |), Line 1 = contact line (has | or @)
+    if(resumeLines[0] && !/[@|•]/.test(resumeLines[0]) && resumeLines[0].length < 60){
+      cName = resumeLines[0];
+    }
+    if(resumeLines[1] && (resumeLines[1].includes('|') || resumeLines[1].includes('@'))){
+      const contactParts = resumeLines[1].split('|').map(p=>p.trim());
+      contactParts.forEach(p=>{
+        if(/@/.test(p))           cEmail    = p;
+        else if(/\d{3}/.test(p)) cPhone    = p;
+        else if(/linkedin/i.test(p)) cLinkedin = p;
+        else if(p.includes(',') || p.length < 25) cLocation = p;
+      });
+    }
+  }
+
   const prompt = buildPrompt(jd, resume, doR, doC, cName, cPhone, cEmail, cLinkedin, cLocation);
 
   try{
@@ -936,77 +958,95 @@ async function generate(){
 }
 
 function buildPrompt(jd,resume,doR,doC,cName,cPhone,cEmail,cLinkedin,cLocation){
-  const contactLine=[cLocation,[cPhone,cEmail].filter(Boolean).join(' | '),cLinkedin].filter(Boolean).join(' | ');
-  const header=cName?`${cName}\n${contactLine}`:'';
-  const signoff=[cName,[cPhone,cEmail].filter(Boolean).join(' | '),cLinkedin].filter(Boolean).join('\n');
+  const loc      = cLocation||'';
+  const phone    = cPhone||'';
+  const email    = cEmail||'';
+  const linkedin = cLinkedin||'';
+  const name     = cName||'';
 
-  return `You are an expert resume writer. Output PLAIN TEXT ONLY. Zero markdown. Zero asterisks. Zero ** markers. Zero # symbols.
+  // Build contact line
+  const parts = [loc,[phone,email].filter(Boolean).join(' | '),linkedin].filter(Boolean);
+  const contactLine = parts.join(' | ');
+
+  // Build sign-off block
+  const signoff = [name,[phone,email].filter(Boolean).join(' | '),linkedin].filter(Boolean).join('\n');
+
+  return `You are an expert resume writer. CRITICAL RULES:
+1. Output PLAIN TEXT ONLY — zero markdown, zero asterisks **, zero # symbols
+2. You MUST include the labels RESUME_START, RESUME_END, COVER_START, COVER_END exactly as shown
+3. Do NOT merge the resume and cover letter together
+4. The candidate name is: ${name||'[Name not provided]'} — use this exactly, do not change it
 
 JOB DESCRIPTION:
 ${jd}
 
-CANDIDATE INFO:
+CANDIDATE BACKGROUND:
 ${resume}
 
-${doR?`RESUME_START
-Output the resume in this EXACT format. Do not deviate:
-
-${header||'[CANDIDATE NAME]'}
-[City, State | Phone | Email | LinkedIn]
+${doR?`===RESUME===
+RESUME_START
+${name}
+${contactLine}
 
 SUMMARY
-[2-3 sentences only. Mirror JD keywords. Include 2 metrics.]
+[2-3 sentences. JD keywords. 2 metrics. Concise.]
 
 SKILLS
-[Category Label]: [skill1, skill2, skill3]
-[Category Label]: [skill1, skill2, skill3]
-[Category Label]: [skill1, skill2, skill3]
-[Category Label]: [skill1, skill2, skill3]
+[Category]: [skill1, skill2, skill3]
+[Category]: [skill1, skill2, skill3]
+[Category]: [skill1, skill2, skill3]
+[Category]: [skill1, skill2, skill3]
 
 WORK EXPERIENCE
-[Company Name] | [Start – End]
+[Company] | [Date range]
 [Job Title] | [City, State]
-• [bullet with metric]
-• [bullet with metric]
-• [bullet with metric]
-• [bullet with metric]
+• [bullet — action verb + metric]
+• [bullet — action verb + metric]
+• [bullet — action verb + metric]
+• [bullet — action verb + metric]
 
-[Next Company] | [Start – End]
+[Company] | [Date range]
 [Job Title] | [City, State]
-• [bullet with metric]
-• [bullet with metric]
-• [bullet with metric]
+• [bullet]
+• [bullet]
+• [bullet]
+
+[Company] | [Date range]
+[Job Title] | [City, State]
+• [bullet]
+• [bullet]
 
 EDUCATION
-[University Name] | [Start – End]
+[University] | [Date range]
 [Degree] | [City, State]
 
-[University Name] | [Start – End]
+[University] | [Date range]
 [Degree] | [City, State]
-RESUME_END`:''}
+RESUME_END
+===END RESUME===`:''}
 
-${doC?`COVER_START
-Output in PLAIN TEXT, exact structure below:
-
+${doC?`===COVER LETTER===
+COVER_START
 Dear Hiring Manager,
 
-[Paragraph 1: Memorable hook - why this role. NO "I am writing to express my interest."]
+[Paragraph 1: Compelling hook — why this specific role. NO "I am writing to express my interest."]
 
-[Paragraph 2: 2-3 accomplishments with metrics matching the JD.]
+[Paragraph 2: 2-3 accomplishments with real metrics from the resume that match the JD.]
 
-[Paragraph 3: Why this company specifically, using their JD language.]
+[Paragraph 3: Why this specific company using their own JD language.]
 
 Thank you for your time and consideration. I look forward to discussing how my experience can contribute to your team's success.
 
 Sincerely,
 ${signoff}
-COVER_END`:''}`;
+COVER_END
+===END COVER LETTER===`:''}`;
 }
 
 function extractSection(text, start, end){
   const s = text.indexOf(start);
   const e = text.indexOf(end);
-  if(s===-1) return text;
+  if(s===-1) return '';  // return empty if label not found — never dump full text
   return text.slice(s+start.length, e===-1?undefined:e).trim();
 }
 
@@ -1018,11 +1058,11 @@ function renderOutput(text, doR, doC){
   const sections = [];
   if(doR){
     const content = extractSection(text,'RESUME_START','RESUME_END');
-    if(content) sections.push({label:'Resume', content, type:'resume'});
+    if(content && content.length > 20) sections.push({label:'Resume', content, type:'resume'});
   }
   if(doC){
     const content = extractSection(text,'COVER_START','COVER_END');
-    if(content) sections.push({label:'Cover Letter', content, type:'cover'});
+    if(content && content.length > 20) sections.push({label:'Cover Letter', content, type:'cover'});
   }
   if(!sections.length) sections.push({label:'Output',content:text,type:'other'});
 
